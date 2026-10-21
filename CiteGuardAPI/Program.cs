@@ -16,8 +16,26 @@ app.UseCors("AllowReactApp");
 
 app.MapGet("/api/verify", async (string doi) =>
 {
-    using var client = new HttpClient();
+    if (string.IsNullOrWhiteSpace(doi))
+    {
+        return Results.NotFound(new { message = "Please enter a valid DOI." });
+    }
 
+    doi = doi.Trim();
+    if (doi.StartsWith("https://doi.org/", StringComparison.OrdinalIgnoreCase))
+    {
+        doi = doi.Substring("https://doi.org/".Length);
+    }
+    else if (doi.StartsWith("http://doi.org/", StringComparison.OrdinalIgnoreCase))
+    {
+        doi = doi.Substring("http://doi.org/".Length);
+    }
+    else if (doi.StartsWith("doi:", StringComparison.OrdinalIgnoreCase))
+    {
+        doi = doi.Substring("doi:".Length);
+    }
+
+    using var client = new HttpClient();
     client.DefaultRequestHeaders.Add("User-Agent", "CiteGuardIA-Capstone/1.0 (mailto:student@ccdi.edu.ph)");
 
     try
