@@ -16,10 +16,7 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-app.UseHttpsRedirection();
-
 app.UseCors("AllowReactApp");
-
 
 app.MapGet("/api/verify", async (string doi) =>
 {
@@ -31,18 +28,17 @@ app.MapGet("/api/verify", async (string doi) =>
     try
     {
         var response = await client.GetAsync($"https://api.crossref.org/works/{doi}");
-
         if (!response.IsSuccessStatusCode)
+        {
             return Results.NotFound(new { message = "DOI not found or invalid academic reference." });
+        }
 
         var jsonContent = await response.Content.ReadAsStringAsync();
-
-        // Return the raw Crossref JSON payload back to your React frontend
         return Results.Content(jsonContent, "application/json");
     }
     catch (Exception)
     {
-        return Results.Problem("An error occurred while communicating with the Crossref API.");
+        return Results.Problem("An error occurred while verifying the reference.");
     }
 });
 
