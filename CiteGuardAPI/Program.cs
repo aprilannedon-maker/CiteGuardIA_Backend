@@ -3,11 +3,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReactApp", policy =>
+    builder.Services.AddCors(options =>
     {
-        policy.WithOrigins("http://localhost:5175") 
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        options.AddPolicy("AllowReactApp", policy =>
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyHeader()
+                  .AllowAnyMethod();
+        });
     });
 });
 
