@@ -1,16 +1,12 @@
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCors(options =>
 {
-    builder.Services.AddCors(options =>
+    options.AddPolicy("AllowReactApp", policy =>
     {
-        options.AddPolicy("AllowReactApp", policy =>
-        {
-            policy.AllowAnyOrigin()
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
-        });
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
     });
 });
 
@@ -22,7 +18,6 @@ app.MapGet("/api/verify", async (string doi) =>
 {
     using var client = new HttpClient();
 
-    // Crossref recommends adding a User-Agent header with contact info
     client.DefaultRequestHeaders.Add("User-Agent", "CiteGuardIA-Capstone/1.0 (mailto:student@ccdi.edu.ph)");
 
     try
