@@ -1,91 +1,91 @@
 using Microsoft.Data.Sqlite;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowReactApp", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
-
+// Add services if needed
 var app = builder.Build();
-app.UseCors("AllowReactApp");
 
-// Define SQLite Connection String & Initialize Database Table
-const string dbConnectionString = "Data Source=citeguard.db";
+// SQLite database connection string
+string dbConnectionString = "Data Source=citeguard.db";
+
+// Initialize the SQLite database table on startup
 InitializeDatabase();
 
-// 1. VERIFY ENDPOINT (Logs verification attempt to SQLite)
+// 1. VERIFY ENDPOINT: Validates DOI via Crossref, hashes, saves to SQLite, and returns clean report
 app.MapGet("/api/verify", async (string doi) =>
 {
     if (string.IsNullOrWhiteSpace(doi))
     {
-        return Results.NotFound(new { message = "Please enter a valid DOI." });
+        return Results.BadRequest(new { error = "DOI parameter is required." });
     }
 
-    doi = doi.Trim();
-    if (doi.StartsWith("https://doi.org/", StringComparison.OrdinalIgnoreCase))
-    {
-        doi = doi.Substring("https://doi.org/".Length);
-    }
-    else if (doi.StartsWith("http://doi.org/", StringComparison.OrdinalIgnoreCase))
-    {
-        doi = doi.Substring("http://doi.org/".Length);
-    }
-    else if (doi.StartsWith("doi:", StringComparison.OrdinalIgnoreCase))
-    {
-        doi = doi.Substring("doi:".Length);
-    }
+    string cleanDoi = doi.Trim();
 
-    using var client = new HttpClient();
-    client.DefaultRequestHeaders.Add("User-Agent", "CiteGuardIA-Capstone/1.0 (mailto:student@ccdi.edu.ph)");
+    // Fetch metadata from Crossref API
+    using var httpClient = new HttpClient();
+    httpClient.DefaultRequestHeaders.Add("User-Agent", "CiteGuardIA/1.0 (mailto:student@ccdi.edu.ph)");
+
+    string crossrefUrl = $"https://api.crossref.org/works/{Uri.EscapeDataString(cleanDoi)}";
 
     try
     {
-        var response = await client.GetAsync($"https://api.crossref.org/works/{doi}");
+        var response = await httpClient.GetAsync(crossrefUrl);
         if (!response.IsSuccessStatusCode)
         {
-            return Results.NotFound(new { message = "DOI not found or invalid academic reference." });
+            return Results.NotFound(new { error = "DOI not found in Crossref database." });
         }
 
-        var jsonContent = await response.Content.ReadAsStringAsync();
+        var jsonString = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(jsonString);
+        var root = doc.RootElement;
 
-        // Parse JSON metadata to calculate score and extract title for the audit log
-        using var doc = JsonDocument.Parse(jsonContent);
-        var messageProp = doc.RootElement.GetProperty("message");
+        // Safely extract the paper title from Crossref response
+        string title = "Unknown Title";
+        if (root.TryGetProperty("message", out var messageProp) &&
+            messageProp.TryGetProperty("title", out var titleProp) &&
+            titleProp.GetArrayLength() > 0)
+        {
+            title = titleProp[0].GetString() ?? "Unknown Title";
+        }
 
-        bool hasTitle = messageProp.TryGetProperty("title", out var titleProp) && titleProp.GetArrayLength() > 0;
-        bool hasJournal = messageProp.TryGetProperty("container-title", out var journalProp) && journalProp.GetArrayLength() > 0;
-        bool hasYear = messageProp.TryGetProperty("published", out _);
-        bool hasAuthor = messageProp.TryGetProperty("author", out var authorProp) && authorProp.GetArrayLength() > 0;
+        int score = 100; // Default integrity score for a valid verified reference
 
-        int score = (hasTitle && hasJournal && hasYear && hasAuthor) ? 100 : 50;
-        string paperTitle = hasTitle ? titleProp[0].GetString() ?? "Unknown Title" : "Unknown Title";
+        // Generate cryptographic SHA-256 integrity hash
+        string rawData = $"{cleanDoi}-{title}-{DateTime.UtcNow}";
+        string integrityHash;
+        using (var sha256 = SHA256.Create())
+        {
+            byte[] bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(rawData));
+            integrityHash = BitConverter.ToString(bytes).Replace("-", "").ToLower();
+        }
 
-        // Generate SHA-256 Hash and Timestamp
-        string timestamp = DateTime.UtcNow.ToString("o");
-        string rawHashInput = $"{doi}-{timestamp}";
-        using var sha256 = System.Security.Cryptography.SHA256.Create();
-        byte[] hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(rawHashInput));
-        string hash = Convert.ToHexString(hashBytes).ToLower();
+        // Build clean verification report object
+        var report = new
+        {
+            StudentId = "CCDI-Student",
+            Doi = cleanDoi,
+            Title = title,
+            Score = score,
+            IntegrityHash = integrityHash,
+            VerifiedAt = DateTime.UtcNow.ToString("o")
+        };
 
         // Save record into SQLite database
-        SaveVerificationRecord("CCDI-Student", doi, paperTitle, score, hash, timestamp);
+        SaveVerificationRecord(report.StudentId, report.Doi, report.Title, report.Score, report.IntegrityHash, report.VerifiedAt);
 
-        return Results.Content(jsonContent, "application/json");
+        // Return the clean report JSON directly
+        return Results.Ok(report);
     }
-    catch (Exception)
+    catch (Exception ex)
     {
-        return Results.Problem("An error occurred while verifying the reference.");
+        return Results.Problem($"Verification failed: {ex.Message}");
     }
 });
 
-// 2. NEW ENDPOINT: Get All Logged Verification Reports for Professors
+// 2. REPORTS ENDPOINT: Returns all logged verification records for professor review
 app.MapGet("/api/reports", () =>
 {
     var reports = GetVerificationReports();
@@ -93,6 +93,7 @@ app.MapGet("/api/reports", () =>
 });
 
 app.Run();
+
 
 // --- HELPER DATABASE METHODS ---
 
@@ -114,43 +115,46 @@ void InitializeDatabase()
     command.ExecuteNonQuery();
 }
 
-void SaveVerificationRecord(string studentId, string doi, string title, int score, string hash, string timestamp)
+void SaveVerificationRecord(string studentId, string doi, string title, int score, string integrityHash, string verifiedAt)
 {
     using var connection = new SqliteConnection(dbConnectionString);
     connection.Open();
     var command = connection.CreateCommand();
     command.CommandText = @"
         INSERT INTO VerificationReports (StudentId, Doi, Title, Score, IntegrityHash, VerifiedAt)
-        VALUES ($studentId, $doi, $title, $score, $hash, $timestamp);";
+        VALUES ($studentId, $doi, $title, $score, $integrityHash, $verifiedAt);";
+
     command.Parameters.AddWithValue("$studentId", studentId);
     command.Parameters.AddWithValue("$doi", doi);
     command.Parameters.AddWithValue("$title", title);
     command.Parameters.AddWithValue("$score", score);
-    command.Parameters.AddWithValue("$hash", hash);
-    command.Parameters.AddWithValue("$timestamp", timestamp);
+    command.Parameters.AddWithValue("$integrityHash", integrityHash);
+    command.Parameters.AddWithValue("$verifiedAt", verifiedAt);
+
     command.ExecuteNonQuery();
 }
 
 List<object> GetVerificationReports()
 {
-    var list = new List<object>();
+    var reports = new List<object>();
     using var connection = new SqliteConnection(dbConnectionString);
     connection.Open();
     var command = connection.CreateCommand();
     command.CommandText = "SELECT Id, StudentId, Doi, Title, Score, IntegrityHash, VerifiedAt FROM VerificationReports ORDER BY Id DESC;";
+
     using var reader = command.ExecuteReader();
     while (reader.Read())
     {
-        list.Add(new
+        reports.Add(new
         {
-            Id = reader.GetInt32(0),
-            StudentId = reader.GetString(1),
-            Doi = reader.GetString(2),
-            Title = reader.GetString(3),
-            Score = reader.GetInt32(4),
-            IntegrityHash = reader.GetString(5),
-            VerifiedAt = reader.GetString(6)
+            id = reader.GetInt32(0),
+            studentId = reader.GetString(1),
+            doi = reader.GetString(2),
+            title = reader.GetString(3),
+            score = reader.GetInt32(4),
+            integrityHash = reader.GetString(5),
+            verifiedAt = reader.GetString(6)
         });
     }
-    return list;
+    return reports;
 }
