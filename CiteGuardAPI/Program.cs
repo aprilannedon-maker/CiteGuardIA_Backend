@@ -5,8 +5,21 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services if needed
+// 1. ADD CORS SERVICE HERE (Before builder.Build())
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
+
 var app = builder.Build();
+
+// 2. USE CORS MIDDLEWARE HERE (After builder.Build(), before endpoints)
+app.UseCors("AllowAll");
 
 // SQLite database connection string
 string dbConnectionString = "Data Source=citeguard.db";
@@ -94,9 +107,7 @@ app.MapGet("/api/reports", () =>
 
 app.Run();
 
-
 // --- HELPER DATABASE METHODS ---
-
 void InitializeDatabase()
 {
     using var connection = new SqliteConnection(dbConnectionString);
