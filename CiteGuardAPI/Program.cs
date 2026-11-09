@@ -37,6 +37,20 @@ app.MapGet("/api/verify", async (string doi) =>
 
     string cleanDoi = doi.Trim();
 
+    // Automatically strip full DOI URLs if the user pasted them
+    if (cleanDoi.StartsWith("https://doi.org/", StringComparison.OrdinalIgnoreCase))
+    {
+        cleanDoi = cleanDoi.Substring("https://doi.org/".Length);
+    }
+    else if (cleanDoi.StartsWith("http://doi.org/", StringComparison.OrdinalIgnoreCase))
+    {
+        cleanDoi = cleanDoi.Substring("http://doi.org/".Length);
+    }
+    else if (cleanDoi.StartsWith("doi.org/", StringComparison.OrdinalIgnoreCase))
+    {
+        cleanDoi = cleanDoi.Substring("doi.org/".Length);
+    }
+
     // Fetch metadata from Crossref API
     using var httpClient = new HttpClient();
     httpClient.DefaultRequestHeaders.Add("User-Agent", "CiteGuardIA/1.0 (mailto:student@ccdi.edu.ph)");
