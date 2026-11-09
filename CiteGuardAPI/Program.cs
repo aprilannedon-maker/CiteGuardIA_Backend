@@ -5,21 +5,8 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. ADD CORS SERVICE HERE (Before builder.Build())
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyHeader()
-              .AllowAnyMethod();
-    });
-});
-
+// Add services if needed
 var app = builder.Build();
-
-// 2. USE CORS MIDDLEWARE HERE (After builder.Build(), before endpoints)
-app.UseCors("AllowAll");
 
 // SQLite database connection string
 string dbConnectionString = "Data Source=citeguard.db";
@@ -36,20 +23,6 @@ app.MapGet("/api/verify", async (string doi) =>
     }
 
     string cleanDoi = doi.Trim();
-
-    // Automatically strip full DOI URLs if the user pasted them
-    if (cleanDoi.StartsWith("https://doi.org/", StringComparison.OrdinalIgnoreCase))
-    {
-        cleanDoi = cleanDoi.Substring("https://doi.org/".Length);
-    }
-    else if (cleanDoi.StartsWith("http://doi.org/", StringComparison.OrdinalIgnoreCase))
-    {
-        cleanDoi = cleanDoi.Substring("http://doi.org/".Length);
-    }
-    else if (cleanDoi.StartsWith("doi.org/", StringComparison.OrdinalIgnoreCase))
-    {
-        cleanDoi = cleanDoi.Substring("doi.org/".Length);
-    }
 
     // Fetch metadata from Crossref API
     using var httpClient = new HttpClient();
@@ -121,7 +94,9 @@ app.MapGet("/api/reports", () =>
 
 app.Run();
 
+
 // --- HELPER DATABASE METHODS ---
+
 void InitializeDatabase()
 {
     using var connection = new SqliteConnection(dbConnectionString);
